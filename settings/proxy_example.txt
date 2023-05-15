@@ -1,0 +1,2 @@
+socks5:example.com:33333:login:password
+http:example_2.com:33334

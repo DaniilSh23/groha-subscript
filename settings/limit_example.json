@@ -1,0 +1,10 @@
+{
+  "time_auth_accounts": "1000-4000",
+  "subscription_account_limit": "500",
+  "failed_attempt": "5",
+  "flood_account": "750",
+  "time_auth_service": "10-20",
+  "stream_account": "5",
+  "time_auth_proxy": "10",
+  "reset_accounts": "4"
+}
