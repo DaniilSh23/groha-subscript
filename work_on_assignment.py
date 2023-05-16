@@ -5,6 +5,7 @@ import os
 import random
 import shutil
 import threading
+import time
 from typing import List
 import socks
 
@@ -113,7 +114,7 @@ async def do_subscription(client, target, thread_id):
     return True
 
 
-def worker(proxy_string: str, time_auth_proxy: str, reset_accounts: str, thread_id: int, thread_accs: List[str],
+def worker(proxy_string: str, time_auth_proxy: str, time_auth_accounts: str, reset_accounts: str, thread_id: int, thread_accs: List[str],
            target: str):
     """
     Работа по заданию в потоке.
@@ -125,9 +126,6 @@ def worker(proxy_string: str, time_auth_proxy: str, reset_accounts: str, thread_
         target - username или ссылка на канал, на который подписываемся
     """
     MY_LOGGER.info(f'Поток № {thread_id}\tПолучил в работу {len(thread_accs)} аккаунтов.')
-
-    # TODO: дописать эту хрень. Тут надо подставить в нулевой элемент нужный объект для типа прокси
-    #  тут пример объектов https://github.com/Anorov/PySocks#usage-1 в разделе Usage
 
     # Собираем прокси в список
     MY_LOGGER.debug(f'Собираем прокси в список')
@@ -170,18 +168,18 @@ def worker(proxy_string: str, time_auth_proxy: str, reset_accounts: str, thread_
         MY_LOGGER.info(f'Поток № {thread_id}\tАккаунт № {i_indx + 1} коннектится к проксе: {rand_proxy}')
 
         # Достаём инфу об аккаунте из json файла
-        MY_LOGGER.debug(f'Достаём инфу об аккаунте из json файла')
+        MY_LOGGER.debug(f'Поток № {thread_id}\tДостаём инфу об аккаунте из json файла')
         with open(file=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.json'),
                   mode='r', encoding='utf-8') as json_file:
             json_dct = json.load(fp=json_file)
 
         # Создаём отдельный event loop asyncio
-        MY_LOGGER.debug(f'Создаём отдельный event loop asyncio')
+        MY_LOGGER.debug(f'Поток № {thread_id}\tСоздаём отдельный event loop asyncio')
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop=loop)
 
         # Запускаем итерируемый аккаунт телеги
-        MY_LOGGER.debug(f'Запускаем итерируемый аккаунт телеги ({i_acc!r})')
+        MY_LOGGER.debug(f'Поток № {thread_id}\tЗапускаем итерируемый аккаунт телеги ({i_acc!r})')
         try:
             with TelegramClient(
                     session=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.session'),
@@ -196,12 +194,14 @@ def worker(proxy_string: str, time_auth_proxy: str, reset_accounts: str, thread_
                     system_lang_code=json_dct.get("system_lang_pack"),
             ) as client:
                 rslt = loop.run_until_complete(do_subscription(client=client, target=target, thread_id=thread_id))
-                MY_LOGGER.debug(f'Результат работы акка {i_acc!r} == {rslt}')
+                MY_LOGGER.debug(f'Поток № {thread_id}\tРезультат работы акка {i_acc!r} == {rslt}')
+
+                # Перемещение файлов для аккаунта в папку done
                 if rslt:
-                    MY_LOGGER.debug(f'Перемещаем аккаунт {i_acc!r} в папку "done"')
+                    MY_LOGGER.debug(f'Поток № {thread_id}\tПеремещаем аккаунт {i_acc!r} в папку "done"')
                     done_dir = os.path.join(BASE_DIR, 'done')
                     if not os.path.exists(done_dir):
-                        MY_LOGGER.debug(f'Папка done отсутствует и будет создана.')
+                        MY_LOGGER.debug(f'Поток № {thread_id}\tПапка done отсутствует и будет создана.')
                         os.mkdir(done_dir)
                     shutil.move(
                         src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.session'),
@@ -215,15 +215,26 @@ def worker(proxy_string: str, time_auth_proxy: str, reset_accounts: str, thread_
         except ConnectionError as err:
             MY_LOGGER.warning(f'Поток № {thread_id}\tАккаунту {i_acc} не удалось подключится к прокси {rand_proxy}. '
                               f'Текст ошибки: {err}')
+
+            # Перемещение файлов аккаунта, которому не удалось подключится к проксе в папку no_connect
             no_connect_dir = os.path.join(BASE_DIR, 'no_connect')
             if not os.path.exists(no_connect_dir):
-                MY_LOGGER.debug(f'Папка no_connect отсутствует, создаём её.')
+                MY_LOGGER.debug(f'Поток № {thread_id}\tПапка no_connect отсутствует, создаём её.')
                 os.mkdir(no_connect_dir)
-            MY_LOGGER.debug(f'Перемещаем файлы аккаунта {i_acc!r} в папку no_connect')
+            MY_LOGGER.debug(f'Поток № {thread_id}\tПеремещаем файлы аккаунта {i_acc!r} в папку no_connect')
             shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.session'),
                         dst=os.path.join(no_connect_dir, f'{i_acc}.session'))
             shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.json'),
                         dst=os.path.join(no_connect_dir, f'{i_acc}.json'))
+
+        # Таймаут между действиями аккаунтов
+        MY_LOGGER.debug(f'Поток № {thread_id}\tРассчитываем таймаут между действиями аккаунтов. '
+                        f'Диапазон паузы: {time_auth_accounts}')
+        acc_timeout = time_auth_accounts.replace(' ', '').split('-')
+        sleep_betwen_actions = random.randint(int(acc_timeout[0]), int(acc_timeout[1]))
+        MY_LOGGER.info(f'Поток № {thread_id}\tПауза перед действием для следующего аккаунта: '
+                       f'{sleep_betwen_actions} сук.')
+        time.sleep(sleep_betwen_actions)
 
 
 def main_work_on_assignment(limits_dct: dict, target: str):
@@ -235,8 +246,9 @@ def main_work_on_assignment(limits_dct: dict, target: str):
     # Записываем необходимые данные в переменные
     MY_LOGGER.debug(f'Записываем необходимые данные для выполнения задания в переменные')
     threads_numb = limits_dct.get('stream_account')
-    time_auth_proxy = limits_dct.get('time_auth_proxy')     # Таймаут подключения через проксю
-    reset_accounts = limits_dct.get('reset_accounts')   # Кол-во попыток подключения аккаунта через проксю
+    time_auth_proxy = limits_dct.get('time_auth_proxy')  # Таймаут подключения через проксю
+    reset_accounts = limits_dct.get('reset_accounts')  # Кол-во попыток подключения аккаунта через проксю
+    time_auth_accounts = limits_dct.get('time_auth_accounts')  # Таймаут между действиями аккаунта
 
     # Открываем файл с проксями и складываем их в список
     MY_LOGGER.debug(f'Открываем файл с проксями и складываем их в список')
@@ -246,8 +258,8 @@ def main_work_on_assignment(limits_dct: dict, target: str):
     # Распределяем аккаунты по потокам
     MY_LOGGER.debug(f'Распределяем аккаунты по потокам')
     acc_dir_path = os.path.join(BASE_DIR, 'accounts')
-    general_acc_lst = []    # здесь будут названия файлов без расширений
-    for i_file in os.listdir(acc_dir_path):     # Формируем общий список аккаунтов
+    general_acc_lst = []  # здесь будут названия файлов без расширений
+    for i_file in os.listdir(acc_dir_path):  # Формируем общий список аккаунтов
 
         if os.path.isfile(os.path.join(acc_dir_path, i_file)) and os.path.splitext(i_file)[1] == '.session':
             MY_LOGGER.debug(f'Условие: итерируемый объект директории файл с расширением .session проверено успешно')
@@ -263,11 +275,11 @@ def main_work_on_assignment(limits_dct: dict, target: str):
                                   f'при распределении аккаунтов по потокам')
 
     MY_LOGGER.debug(f'Формируем списки аккаунтов для потоков')
-    threads_acc_dct = dict()    # Словарь с акками, распределёнными по потокам
+    threads_acc_dct = dict()  # Словарь с акками, распределёнными по потокам
     accs_for_one_thread = math.ceil(len(general_acc_lst) / int(threads_numb))
-    for i_indx in range(int(threads_numb)):     # Формируем списки аккаунтов для каждого потока
+    for i_indx in range(int(threads_numb)):  # Формируем списки аккаунтов для каждого потока
         threads_acc_dct[i_indx + 1] = general_acc_lst[:accs_for_one_thread]
-        general_acc_lst = general_acc_lst[accs_for_one_thread:]     # срезаем те акки, которые уже забрали
+        general_acc_lst = general_acc_lst[accs_for_one_thread:]  # срезаем те акки, которые уже забрали
 
     # Запускаем потоки
     MY_LOGGER.debug(f'Запускаем потоки')
@@ -275,8 +287,10 @@ def main_work_on_assignment(limits_dct: dict, target: str):
     for i_thread_id in range(1, int(threads_numb) + 1):
         MY_LOGGER.info(f'Запускаем поток № {i_thread_id}')
         i_thread_accs = threads_acc_dct.get(i_thread_id)
-        thread = threading.Thread(target=worker, args=(proxy_string, time_auth_proxy, reset_accounts, i_thread_id,
-                                                       i_thread_accs, target))
+        thread = threading.Thread(target=worker, args=(
+            proxy_string, time_auth_proxy, time_auth_accounts,
+            reset_accounts, i_thread_id, i_thread_accs, target
+        ))
         threads.append(thread)
         thread.start()
 
