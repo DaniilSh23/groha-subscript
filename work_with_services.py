@@ -121,6 +121,16 @@ def get_tasks(service: str, task_type: str = '1', ):
     service_timeout_range[0] = int(service_timeout_range[0])
     service_timeout_range[1] = int(service_timeout_range[1])
 
+    # TODO: сейчас тут заглушка на задание, потом убрать
+    target = random.choice(
+        (
+            'https://t.me/+1ZKtuEk_ivk2NmZi',
+            'https://t.me/test_channel_for_my_bot32',
+            'https://t.me/+2vriZ41DymY2ZjYy'
+        )
+    )
+    return target
+
     if service == '2':
 
         MY_LOGGER.debug(f'Выбран сервис vtope. Получаем задания')

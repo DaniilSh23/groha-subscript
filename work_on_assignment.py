@@ -110,6 +110,7 @@ async def do_subscription(client, target, thread_id):
             return
 
     MY_LOGGER.success(f'Поток № {thread_id}\tАккаунт успешно подписался на канал {target}')
+    return True
 
 
 def worker(proxy_string: str, time_auth_proxy: str, reset_accounts: str, thread_id: int, thread_accs: List[str],
@@ -186,7 +187,7 @@ def worker(proxy_string: str, time_auth_proxy: str, reset_accounts: str, thread_
                     session=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.session'),
                     api_id=json_dct.get("app_id"),
                     api_hash=json_dct.get("app_hash"),
-                    proxy=rand_proxy,  # TODO: с проксёй хуйня, разобраться
+                    proxy=rand_proxy,
                     timeout=int(time_auth_proxy),
                     connection_retries=int(reset_accounts),
                     app_version=json_dct.get("app_version").split()[0],
@@ -194,7 +195,22 @@ def worker(proxy_string: str, time_auth_proxy: str, reset_accounts: str, thread_
                     lang_code=json_dct.get("lang_pack"),
                     system_lang_code=json_dct.get("system_lang_pack"),
             ) as client:
-                loop.run_until_complete(do_subscription(client=client, target=target, thread_id=thread_id))
+                rslt = loop.run_until_complete(do_subscription(client=client, target=target, thread_id=thread_id))
+                MY_LOGGER.debug(f'Результат работы акка {i_acc!r} == {rslt}')
+                if rslt:
+                    MY_LOGGER.debug(f'Перемещаем аккаунт {i_acc!r} в папку "done"')
+                    done_dir = os.path.join(BASE_DIR, 'done')
+                    if not os.path.exists(done_dir):
+                        MY_LOGGER.debug(f'Папка done отсутствует и будет создана.')
+                        os.mkdir(done_dir)
+                    shutil.move(
+                        src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.session'),
+                        dst=os.path.join(BASE_DIR, 'done', f'{i_acc}.session')
+                    )
+                    shutil.move(
+                        src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.json'),
+                        dst=os.path.join(BASE_DIR, 'done', f'{i_acc}.json')
+                    )
 
         except ConnectionError as err:
             MY_LOGGER.warning(f'Поток № {thread_id}\tАккаунту {i_acc} не удалось подключится к прокси {rand_proxy}. '
