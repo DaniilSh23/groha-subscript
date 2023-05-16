@@ -3,6 +3,7 @@ import json
 import math
 import os
 import random
+import shutil
 import threading
 from typing import List
 import socks
@@ -194,9 +195,19 @@ def worker(proxy_string: str, time_auth_proxy: str, reset_accounts: str, thread_
                     system_lang_code=json_dct.get("system_lang_pack"),
             ) as client:
                 loop.run_until_complete(do_subscription(client=client, target=target, thread_id=thread_id))
+
         except ConnectionError as err:
             MY_LOGGER.warning(f'Поток № {thread_id}\tАккаунту {i_acc} не удалось подключится к прокси {rand_proxy}. '
                               f'Текст ошибки: {err}')
+            no_connect_dir = os.path.join(BASE_DIR, 'no_connect')
+            if not os.path.exists(no_connect_dir):
+                MY_LOGGER.debug(f'Папка no_connect отсутствует, создаём её.')
+                os.mkdir(no_connect_dir)
+            MY_LOGGER.debug(f'Перемещаем файлы аккаунта {i_acc!r} в папку no_connect')
+            shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.session'),
+                        dst=os.path.join(no_connect_dir, f'{i_acc}.session'))
+            shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.json'),
+                        dst=os.path.join(no_connect_dir, f'{i_acc}.json'))
 
 
 def main_work_on_assignment(limits_dct: dict, target: str):
