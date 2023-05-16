@@ -3,6 +3,7 @@ import os
 import re
 from typing import List
 
+from my_exceptions import MyException
 from settings.settings import MY_LOGGER, BASE_DIR
 
 
@@ -72,8 +73,13 @@ def check_accounts(thread_numbs: int) -> str:
             else:
                 MY_LOGGER.warning(f'Не найдена пара файлов session-json для {i_file}')
 
+    if acc_pairs_numb == 0:
+        MY_LOGGER.warning(f'Не обнаружены аккаунты в папке accounts. '
+                          f'Пожалуйста, добавьте аккаунты в указанную папку и повторите запуск скрипта')
+        raise MyException(message='Не обнаружены аккаунты в папке accounts.')
+
     # Если кол-во потоков больше, чем аккаунтов
-    if thread_numbs > acc_pairs_numb:
+    elif thread_numbs > acc_pairs_numb:
         MY_LOGGER.warning(f'Количество потоков {thread_numbs!r} больше, чем аккаунтов {acc_pairs_numb!r}. '
                           f'Уменьшаем число потоков до {acc_pairs_numb}!')
         thread_numbs = acc_pairs_numb

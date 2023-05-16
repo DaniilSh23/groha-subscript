@@ -228,13 +228,14 @@ def worker(proxy_string: str, time_auth_proxy: str, time_auth_accounts: str, res
                         dst=os.path.join(no_connect_dir, f'{i_acc}.json'))
 
         # Таймаут между действиями аккаунтов
-        MY_LOGGER.debug(f'Поток № {thread_id}\tРассчитываем таймаут между действиями аккаунтов. '
-                        f'Диапазон паузы: {time_auth_accounts}')
-        acc_timeout = time_auth_accounts.replace(' ', '').split('-')
-        sleep_betwen_actions = random.randint(int(acc_timeout[0]), int(acc_timeout[1]))
-        MY_LOGGER.info(f'Поток № {thread_id}\tПауза перед действием для следующего аккаунта: '
-                       f'{sleep_betwen_actions} сук.')
-        time.sleep(sleep_betwen_actions)
+        if i_indx + 1 < len(thread_accs):   # Проверяем, что аккаунт не последний в списке
+            MY_LOGGER.debug(f'Поток № {thread_id}\tРассчитываем таймаут между действиями аккаунтов. '
+                            f'Диапазон паузы: {time_auth_accounts}')
+            acc_timeout = time_auth_accounts.replace(' ', '').split('-')
+            sleep_betwen_actions = random.randint(int(acc_timeout[0]), int(acc_timeout[1]))
+            MY_LOGGER.info(f'Поток № {thread_id}\tПауза перед действием для следующего аккаунта: '
+                           f'{sleep_betwen_actions} сук.')
+            time.sleep(sleep_betwen_actions)
 
 
 def main_work_on_assignment(limits_dct: dict, target: str):
