@@ -11,7 +11,7 @@ import socks
 
 from telethon.errors import ChannelsTooMuchError, ChannelInvalidError, ChannelPrivateError, InviteHashEmptyError, \
     InviteHashExpiredError, InviteHashInvalidError, SessionPasswordNeededError, UsersTooMuchError, \
-    UserAlreadyParticipantError
+    UserAlreadyParticipantError, rpcerrorlist
 from telethon import TelegramClient
 from telethon.network import connection
 from telethon.tl import functions
@@ -113,6 +113,12 @@ async def do_subscription(client, target, thread_id) -> Tuple[int, str]:
             await client(functions.channels.JoinChannelRequest(
                 channel=target
             ))
+
+        except rpcerrorlist.FloodWaitError as err:  # TODO: дописать обработку по флуду, не забыть выбрать и вписать код
+            pass
+        except rpcerrorlist.UserBlockedError as err:    # TODO: дописать обработку по бану
+            pass
+
         except ChannelsTooMuchError as err:
             MY_LOGGER.warning(f'Не удалось подписаться на канал: {target}. '
                               f'Причина: аккаунт присоединился к слишком большому количеству каналов. Текст ошибки: {err}')
@@ -283,11 +289,12 @@ def worker(proxy_string: str, time_auth_proxy: str, time_auth_accounts: str, res
         return main_result
 
 
-def main_work_on_assignment(limits_dct: dict, target: str):
+def main_work_on_assignment(limits_dct: dict, target: str) -> Tuple:
     """
     Основная функция работы по заданиям.
     :param limits_dct - ограничения для работы по заданию.
     :param target - ссылка, username для канала, на который подписываемся.
+    :return: Tuple - счётчик успешных аккаунтов, потоки с ошибкой, валидна ли ссылка
     """
     # Записываем необходимые данные в переменные
     MY_LOGGER.debug(f'Записываем необходимые данные для выполнения задания в переменные')
@@ -339,22 +346,29 @@ def main_work_on_assignment(limits_dct: dict, target: str):
         thread.start()
         threads.append(thread)
 
-    work_rslt = [0, 0]  # [Кол-во успешно подписанных аккаунтов, общее кол-во аккаунтов]
-    for i_thread in threads:
+    accs_rslt = [0, 0]  # [Кол-во успешно подписанных аккаунтов, общее кол-во аккаунтов]
+    fail_threads: List[Tuple[int, int, str]] = []   # (номер потока, код результата, описание)
+    invalid_link = False    # Флаг, о том, что по переданной в задании ссылке нельзя подписаться
+    for i_indx, i_thread in enumerate(threads):
         i_thread.join()
         thread_result = i_thread.result
 
         if thread_result[0] == 1:
             MY_LOGGER.debug(f'Плюсуем результат работы потока к успешно отработавшим аккаунтам и общему их числу')
-            work_rslt[0] += thread_result[1].split('|')[0]
-            work_rslt[1] += thread_result[1].split('|')[1]
+            accs_rslt[0] += thread_result[1].split('|')[0]
+            accs_rslt[1] += thread_result[1].split('|')[1]
 
         elif thread_result[0] == 2:
-            # TODO: обработка для неожиданного исключения в потоке
-            pass
+            MY_LOGGER.debug(f'ПОТОК № {i_indx + 1}\tПрекращён из-за неожиданного исключения. '
+                            f'Текст ошибки: {thread_result[1]}')
+            fail_threads.append((i_indx + 1, 2, f'Получено неожиданное исключение, текст: {thread_result[1]}'))
+        else:
+            MY_LOGGER.debug(f'ПОТОК № {i_indx + 1}\tПроблемма со ссылкой на канал(чат), текст: {thread_result[1]}')
+            fail_threads.append((i_indx + 1, 3, f'Проблема со ссылкой на канал(чат), текст: {thread_result[1]}'))
+            invalid_link = True
 
-        elif thread_result[0] == 2:
-            # TODO: обработка для хренового задания, полученного от сервиса (учесть также какой был выбран сервис)
-            pass
+    MY_LOGGER.debug(f'Возвращаем результат работы потоков в функцию main')
+    return accs_rslt, fail_threads, invalid_link
+
 
 

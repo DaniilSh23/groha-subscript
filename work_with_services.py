@@ -129,7 +129,8 @@ def get_tasks(service: str, task_type: str = '1', ):
             'https://t.me/+2vriZ41DymY2ZjYy'
         )
     )
-    return target
+    task_id = 0
+    return target, task_id
 
     if service == '2':
 
@@ -150,6 +151,7 @@ def get_tasks(service: str, task_type: str = '1', ):
             if response_data.get('id'):
                 MY_LOGGER.success(f'ЗАДАНИЕ ПОЛУЧЕНО УСПЕШНО. ОТВЕТ: {response_data}')
                 target = 'https://t.me/+2vriZ41DymY2ZjYy'   # TODO: задание получено, но пока заглушка, надо дописать
+                task_id = response_data.get('id')
 
             elif response_data.get('error') == 'invalid':
                 MY_LOGGER.warning('При запросе заданий из vtope получена ошибка. Описание: atoken не найден')
@@ -196,4 +198,59 @@ def get_tasks(service: str, task_type: str = '1', ):
         # target = 'https://t.me/+1ZKtuEk_ivk2NmZi'
         # target = 'https://t.me/+2vriZ41DymY2ZjYy'
 
-    return target
+    return target, task_id
+
+
+def send_task_error_to_vtope(task_id):
+    """
+    Отправка запроса к vtope для информирования об ошибке при выполнении задания из-за невалидной ссылки.
+    :return:
+    """
+    # TODO: запросы требуют реальной проверки
+
+    MY_LOGGER.debug(f'Открываем файл с настройками API для сервисов vtope | socpanel')
+    with open(file=os.path.join(BASE_DIR, 'settings', 'api_keys.json'), mode='r', encoding='utf-8') as file:
+        api_values = json.load(fp=file)
+
+    MY_LOGGER.debug(f'Выполняем запрос к vtope')
+    url = "https://tasks.vto.pe/botapi/tasks/m/done/taskerror"
+    querystring = {"atoken": api_values.get("vtope_atoken"), "id": task_id}
+    response = requests.get(url, params=querystring)
+
+    if response.status_code not in [200, 400]:
+        MY_LOGGER.warning(f'Неудачный запрос к сервису vtope. Ответ: {response.json()}')
+        raise MyException(message=f'Неудачный запрос к сервису vtope. Ответ: {response.json()}')
+
+    response_data = response.json()
+    if response_data.get('error') == 'ok':
+        MY_LOGGER.info(f'Задание отмечено как невалидное.')
+    elif response_data.get('error') == 'invalid':
+        MY_LOGGER.warning(f'не найден аккаунт/задание')
+
+
+def send_success_to_vtope(task_id):
+    """
+    Отправка запроса к vtope об успешно выполненном задании.
+    :param task_id:
+    :return:
+    """
+    # TODO: запросы требуют реальной проверки
+
+    MY_LOGGER.debug(f'Открываем файл с настройками API для сервисов vtope | socpanel')
+    with open(file=os.path.join(BASE_DIR, 'settings', 'api_keys.json'), mode='r', encoding='utf-8') as file:
+        api_values = json.load(fp=file)
+
+    MY_LOGGER.debug(f'Выполняем запрос к vtope')
+    url = "https://tasks.vto.pe/botapi/tasks/m/done/ok"
+    querystring = {"atoken": api_values.get("vtope_atoken"), "id": task_id}
+    response = requests.get(url, params=querystring)
+
+    if response.status_code not in [200, 400]:
+        MY_LOGGER.warning(f'Неудачный запрос к сервису vtope. Ответ: {response.json()}')
+        raise MyException(message=f'Неудачный запрос к сервису vtope. Ответ: {response.json()}')
+
+    response_data = response.json()
+    if response_data.get('error') == 'ok':
+        MY_LOGGER.info(f'Задание успешно отправлено на проверку.')
+    elif response_data.get('error') == 'invalid':
+        MY_LOGGER.warning(f'не найден аккаунт/задание')
