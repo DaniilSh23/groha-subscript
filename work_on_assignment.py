@@ -43,6 +43,8 @@ async def do_subscription(client, target, thread_id) -> Tuple[int, str]:
             9 - пользователь уже является участником данного канала (чата)
             10 - аккаунт уже вступил в слишком большое количество каналов (чатов)
             12 - юзер быд забанен в канале (чате) или канал приватный и у юзера нет прав для вступления
+            13 - флуд
+            14 - бан
 
     :return (code, description)
     """
@@ -55,6 +57,15 @@ async def do_subscription(client, target, thread_id) -> Tuple[int, str]:
         MY_LOGGER.debug(f'Проверяем, что ссылка-приглашение активна')
         try:
             await client(functions.messages.CheckChatInviteRequest(hash=lnk_hash))
+
+        except rpcerrorlist.FloodWaitError as err:
+            MY_LOGGER.debug(f'Поток № {thread_id}\tАккаунт поймал флуд. Текст ошибки: {err}')
+            return 13, str(err.seconds)  # (код, секунды ожидания по флуду)
+
+        except rpcerrorlist.UserBlockedError as err:
+            MY_LOGGER.debug(f'Поток № {thread_id}\tАккаунт поймал бан. Текст ошибки: {err}')
+            return 14, str(err.message)
+
         except InviteHashEmptyError as err:
             MY_LOGGER.warning(f'В ссылке отсутствует хэш, необходимый для подписки! '
                               f'Ссылка: {target}. Текст ошибки: {err}')
@@ -74,6 +85,15 @@ async def do_subscription(client, target, thread_id) -> Tuple[int, str]:
         MY_LOGGER.debug(f'Пробуем вступить в канал по ссылке: {target}')
         try:
             await client(functions.messages.ImportChatInviteRequest(lnk_hash))
+
+        except rpcerrorlist.FloodWaitError as err:
+            MY_LOGGER.debug(f'Поток № {thread_id}\tАккаунт поймал флуд. Текст ошибки: {err}')
+            return 13, str(err.seconds)  # (код, секунды ожидания по флуду)
+
+        except rpcerrorlist.UserBlockedError as err:
+            MY_LOGGER.debug(f'Поток № {thread_id}\tАккаунт поймал бан. Текст ошибки: {err}')
+            return 14, str(err.message)
+
         except ChannelsTooMuchError as err:
             MY_LOGGER.warning(f'Аккаунт уже присоединён к большому кол-ву каналов/групп! '
                               f'Текст ошибки: {err}')
@@ -114,10 +134,13 @@ async def do_subscription(client, target, thread_id) -> Tuple[int, str]:
                 channel=target
             ))
 
-        except rpcerrorlist.FloodWaitError as err:  # TODO: дописать обработку по флуду, не забыть выбрать и вписать код
-            pass
-        except rpcerrorlist.UserBlockedError as err:    # TODO: дописать обработку по бану
-            pass
+        except rpcerrorlist.FloodWaitError as err:
+            MY_LOGGER.debug(f'Поток № {thread_id}\tАккаунт поймал флуд. Текст ошибки: {err}')
+            return 13, str(err.seconds)     # (код, секунды ожидания по флуду)
+
+        except rpcerrorlist.UserBlockedError as err:
+            MY_LOGGER.debug(f'Поток № {thread_id}\tАккаунт поймал бан. Текст ошибки: {err}')
+            return 14, str(err.message)
 
         except ChannelsTooMuchError as err:
             MY_LOGGER.warning(f'Не удалось подписаться на канал: {target}. '
@@ -142,7 +165,7 @@ async def do_subscription(client, target, thread_id) -> Tuple[int, str]:
 
 
 def worker(proxy_string: str, time_auth_proxy: str, time_auth_accounts: str, reset_accounts: str, thread_id: int,
-           thread_accs: List[str], target: str) -> Tuple[int, str]:
+           thread_accs: List[str], target: str, flood_account: str) -> Tuple[int, str]:
     """
     Работа по заданию в потоке.
         proxy_string - список проксей в виде строки,
@@ -151,6 +174,7 @@ def worker(proxy_string: str, time_auth_proxy: str, time_auth_accounts: str, res
         thread_id - номер потока,
         thread_accs - список аккаунтов для данного потока (название файла без расширения)
         target - username или ссылка на канал, на который подписываемся
+        flood_account - макс. таймаут по флуду для аккаунта
 
     Коды возврата потока:
         1 - Успешная отработка по заданию
@@ -229,35 +253,67 @@ def worker(proxy_string: str, time_auth_proxy: str, time_auth_accounts: str, res
                     lang_code=json_dct.get("lang_pack"),
                     system_lang_code=json_dct.get("system_lang_pack"),
             ) as client:
-                rslt = loop.run_until_complete(do_subscription(client=client, target=target, thread_id=thread_id))
-                MY_LOGGER.debug(f'Поток № {thread_id}\tРезультат работы акка {i_acc!r} == {rslt}')
 
-                # Перемещение файлов для аккаунта в папку done
-                if rslt[0] == 1:
-                    MY_LOGGER.debug(f'Поток № {thread_id}\tПеремещаем аккаунт {i_acc!r} в папку "done"')
-                    done_dir = os.path.join(BASE_DIR, 'done')
-                    if not os.path.exists(done_dir):
-                        MY_LOGGER.debug(f'Поток № {thread_id}\tПапка done отсутствует и будет создана.')
-                        os.mkdir(done_dir)
-                    shutil.move(
-                        src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.session'),
-                        dst=os.path.join(BASE_DIR, 'done', f'{i_acc}.session')
-                    )
-                    shutil.move(
-                        src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.json'),
-                        dst=os.path.join(BASE_DIR, 'done', f'{i_acc}.json')
-                    )
-                    success_accs += 1
+                MY_LOGGER.debug(f'Поток № {thread_id}\tЗапускаем бесконечный цикл для отработки '
+                                f'аккаунта {i_acc!r} по заданию')
+                while True:
+                    rslt = loop.run_until_complete(do_subscription(client=client, target=target, thread_id=thread_id))
+                    MY_LOGGER.debug(f'Поток № {thread_id}\tРезультат работы акка {i_acc!r} == {rslt}')
 
-                if rslt[0] == 2:
-                    MY_LOGGER.debug(f'Поток № {thread_id}\tПолучен код ответа 2 от функции подписки. '
-                                    f'Поток будет остановлен.')
-                    return 2, rslt[1]
+                    # Перемещение файлов для аккаунта в папку done
+                    if rslt[0] == 1:
+                        MY_LOGGER.debug(f'Поток № {thread_id}\tПеремещаем аккаунт {i_acc!r} в папку "done"')
+                        done_dir = os.path.join(BASE_DIR, 'done')
+                        if not os.path.exists(done_dir):
+                            MY_LOGGER.debug(f'Поток № {thread_id}\tПапка done отсутствует и будет создана.')
+                            os.mkdir(done_dir)
+                        shutil.move(
+                            src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.session'),
+                            dst=os.path.join(BASE_DIR, 'done', f'{i_acc}.session')
+                        )
+                        shutil.move(
+                            src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.json'),
+                            dst=os.path.join(BASE_DIR, 'done', f'{i_acc}.json')
+                        )
+                        success_accs += 1
+                        MY_LOGGER.debug(f'Поток № {thread_id}\tОстанавливаем бесконечный цикл для акка {i_acc!r}')
+                        break
 
-                elif rslt[0] in (3, 4, 5, 8, 11):
-                    MY_LOGGER.debug(f'Поток № {thread_id}\tПроблема с каналом, на который необходимо подписаться. '
-                                    f'Поток будет остановлен')
-                    return 3, rslt[1]
+                    if rslt[0] == 2:
+                        MY_LOGGER.debug(f'Поток № {thread_id}\tПолучен код ответа 2 от функции подписки. '
+                                        f'Поток будет остановлен.')
+                        return 2, rslt[1]
+
+                    elif rslt[0] in (3, 4, 5, 8, 11):
+                        MY_LOGGER.debug(f'Поток № {thread_id}\tПроблема с каналом, на который необходимо подписаться. '
+                                        f'Поток будет остановлен')
+                        return 3, rslt[1]
+
+                    elif rslt[0] in (6, 7, 9, 10, 12, 13, 14):
+                        MY_LOGGER.debug(f'Поток № {thread_id}\tПроблема с аккаунтом {i_acc!r}')
+
+                        if rslt[0] == 13:
+                            MY_LOGGER.warning(f'Поток № {thread_id}\tАккаунт {i_acc!r} поймал флуд на {rslt[1]} сек.')
+                            if int(flood_account) < int(rslt[1]):
+                                MY_LOGGER.warning(f'Поток № {thread_id}\tПревышен таймаут по флуду для акка {i_acc!r}\n'
+                                                  f'Порог таймаута по флуду: {flood_account} сек., '
+                                                  f'акк получил: {rslt[1]} сек.')
+                                MY_LOGGER.debug(
+                                    f'Поток № {thread_id}\tОстанавливаем бесконечный цикл для акка {i_acc!r}')
+                                break
+                            time.sleep(int(rslt[1]))
+                            MY_LOGGER.info(f'Поток № {thread_id}\tАккаунт {i_acc!r} повторяет попытку подписки.')
+
+                        elif rslt[0] == 14:
+                            MY_LOGGER.warning(f'Поток № {thread_id}\tАккаунт {i_acc!r} поймал бан.')
+                            MY_LOGGER.debug(f'Поток № {thread_id}\tОстанавливаем бесконечный цикл для акка {i_acc!r}')
+                            break
+
+                        else:
+                            MY_LOGGER.warning(f'Поток № {thread_id}\tВозникла проблема с аккаунтом: {i_acc!r}. '
+                                              f'Он будет перемещён в папку other_fail_accs.\nТекст ошибки: {rslt[1]}')
+                            MY_LOGGER.debug(f'Поток № {thread_id}\tОстанавливаем бесконечный цикл для акка {i_acc!r}')
+                            break
 
         except ConnectionError as err:
             MY_LOGGER.warning(f'Поток № {thread_id}\tАккаунту {i_acc} не удалось подключится к прокси {rand_proxy}. '
@@ -273,6 +329,43 @@ def worker(proxy_string: str, time_auth_proxy: str, time_auth_accounts: str, res
                         dst=os.path.join(no_connect_dir, f'{i_acc}.session'))
             shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.json'),
                         dst=os.path.join(no_connect_dir, f'{i_acc}.json'))
+
+        # Блоки обработки проблем с аккаунтом
+        if rslt[0] == 14:
+            MY_LOGGER.debug(f'Поток № {thread_id}\tПопали в блок IF для выполнения действий в случае бана аккаунта')
+            banned_dir = os.path.join(BASE_DIR, 'banned')
+            if not os.path.exists(banned_dir):
+                MY_LOGGER.debug(f'Поток № {thread_id}\tПапка banned отсутствует и будет создана.')
+                os.mkdir(banned_dir)
+            MY_LOGGER.debug(f'Поток № {thread_id}\tПеремещаем файлы аккаунта {i_acc!r} в папку banned')
+            shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.session'),
+                        dst=os.path.join(banned_dir, f'{i_acc}.session'))
+            shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.json'),
+                        dst=os.path.join(banned_dir, f'{i_acc}.json'))
+
+        elif rslt[0] == 13 and int(flood_account) < int(rslt[1]):
+            MY_LOGGER.debug(f'Поток № {thread_id}\tПопали в блок IF для выполнения действий в случае флуда аккаунта')
+            banned_dir = os.path.join(BASE_DIR, 'flood_to_mutch')
+            if not os.path.exists(banned_dir):
+                MY_LOGGER.debug(f'Поток № {thread_id}\tПапка flood_to_mutch отсутствует и будет создана.')
+                os.mkdir(banned_dir)
+            MY_LOGGER.debug(f'Поток № {thread_id}\tПеремещаем файлы аккаунта {i_acc!r} в папку flood_to_mutch')
+            shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.session'),
+                        dst=os.path.join(banned_dir, f'{i_acc}.session'))
+            shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.json'),
+                        dst=os.path.join(banned_dir, f'{i_acc}.json'))
+
+        elif rslt[0] in (6, 7, 9, 10, 12):
+            MY_LOGGER.debug(f'Поток № {thread_id}\tПопали в блок IF для выполнения действий в случае проблем с акком')
+            other_fail_dir = os.path.join(BASE_DIR, 'other_fail_accs')
+            if not os.path.exists(other_fail_dir):
+                MY_LOGGER.debug(f'Поток № {thread_id}\tПапка other_fail_accs отсутствует и будет создана.')
+                os.mkdir(other_fail_dir)
+            MY_LOGGER.debug(f'Поток № {thread_id}\tПеремещаем файлы аккаунта {i_acc!r} в папку other_fail_accs')
+            shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.session'),
+                        dst=os.path.join(other_fail_dir, f'{i_acc}.session'))
+            shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.json'),
+                        dst=os.path.join(other_fail_dir, f'{i_acc}.json'))
 
         # Таймаут между действиями аккаунтов
         if i_indx + 1 < len(thread_accs):   # Проверяем, что аккаунт не последний в списке
