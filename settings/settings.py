@@ -5,6 +5,8 @@ import sys
 import pytz
 from loguru import logger
 
+DEBUG = False
+
 # Настраиваем запись логов
 MY_LOGGER = logger
 MY_LOGGER.remove()
@@ -24,7 +26,10 @@ MY_LOGGER.add(
     compression="zip",
     enqueue=True
 )  # обычные логи в файл
-MY_LOGGER.add(sink=sys.stdout)  # все логи в терминал
+if DEBUG:
+    MY_LOGGER.add(sink=sys.stdout)  # Все логи в терминал
+else:
+    MY_LOGGER.add(sink=sys.stdout, filter=lambda rec: rec['level'].name != 'DEBUG')  # в терминал все логи, кроме DEBUG
 
 
 # Абсолютный путь к директории проекта

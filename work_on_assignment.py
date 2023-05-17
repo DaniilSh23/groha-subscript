@@ -395,6 +395,7 @@ def main_work_on_assignment(limits_dct: dict, target: str) -> Tuple:
     time_auth_proxy = limits_dct.get('time_auth_proxy')  # Таймаут подключения через проксю
     reset_accounts = limits_dct.get('reset_accounts')  # Кол-во попыток подключения аккаунта через проксю
     time_auth_accounts = limits_dct.get('time_auth_accounts')  # Таймаут между действиями аккаунта
+    flood_account = limits_dct.get('flood_account')  # Макс. таймаут флуда
 
     # Открываем файл с проксями и складываем их в список
     MY_LOGGER.debug(f'Открываем файл с проксями и складываем их в список')
@@ -434,7 +435,8 @@ def main_work_on_assignment(limits_dct: dict, target: str) -> Tuple:
         MY_LOGGER.info(f'Запускаем поток № {i_thread_id}')
         i_thread_accs = threads_acc_dct.get(i_thread_id)
         thread = threading.Thread(target=lambda: setattr(threading.current_thread(), 'result', worker(
-            proxy_string, time_auth_proxy, time_auth_accounts, reset_accounts, i_thread_id, i_thread_accs, target
+            proxy_string, time_auth_proxy, time_auth_accounts, reset_accounts, i_thread_id, i_thread_accs, target,
+            flood_account
         )))
         thread.start()
         threads.append(thread)
@@ -448,8 +450,8 @@ def main_work_on_assignment(limits_dct: dict, target: str) -> Tuple:
 
         if thread_result[0] == 1:
             MY_LOGGER.debug(f'Плюсуем результат работы потока к успешно отработавшим аккаунтам и общему их числу')
-            accs_rslt[0] += thread_result[1].split('|')[0]
-            accs_rslt[1] += thread_result[1].split('|')[1]
+            accs_rslt[0] += int(thread_result[1].split('|')[0])
+            accs_rslt[1] += int(thread_result[1].split('|')[1])
 
         elif thread_result[0] == 2:
             MY_LOGGER.debug(f'ПОТОК № {i_indx + 1}\tПрекращён из-за неожиданного исключения. '
