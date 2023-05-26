@@ -16,7 +16,8 @@ from telethon import TelegramClient
 from telethon.network import connection
 from telethon.tl import functions
 
-from my_exceptions import MyException
+from requests_functions import get_vtope_atoken, get_vtope_acc_status, get_vtope_subs_task, send_success_to_vtope, \
+    send_task_error_to_vtope
 from settings.settings import BASE_DIR, MY_LOGGER
 
 
@@ -136,7 +137,7 @@ async def do_subscription(client, target, thread_id) -> Tuple[int, str]:
 
         except rpcerrorlist.FloodWaitError as err:
             MY_LOGGER.debug(f'Поток № {thread_id}\tАккаунт поймал флуд. Текст ошибки: {err}')
-            return 13, str(err.seconds)     # (код, секунды ожидания по флуду)
+            return 13, str(err.seconds)  # (код, секунды ожидания по флуду)
 
         except rpcerrorlist.UserBlockedError as err:
             MY_LOGGER.debug(f'Поток № {thread_id}\tАккаунт поймал бан. Текст ошибки: {err}')
@@ -164,17 +165,18 @@ async def do_subscription(client, target, thread_id) -> Tuple[int, str]:
     return 1, 'all right'
 
 
-def worker(proxy_string: str, time_auth_proxy: str, time_auth_accounts: str, reset_accounts: str, thread_id: int,
-           thread_accs: List[str], target: str, flood_account: str) -> Tuple[int, str]:
+def worker(proxy_raw: List[str], time_auth_proxy: str, time_auth_accounts: str, reset_accounts: str, thread_id: int,
+           thread_accs: List[str], flood_account: str, btoken: str) -> Tuple[int, str]:
     """
-    Работа по заданию в потоке.
-        proxy_string - список проксей в виде строки,
+    Работа по заданию в потоке:
+        proxy_raw - необработанный список проксей,
         time_auth_proxy - таймаут подключения аккаунта к проксе,
         reset_accounts - кол-во попыток подключения аккаунта к проксе,
         thread_id - номер потока,
         thread_accs - список аккаунтов для данного потока (название файла без расширения)
         target - username или ссылка на канал, на который подписываемся
         flood_account - макс. таймаут по флуду для аккаунта
+        btoken - vtope btoken.
 
     Коды возврата потока:
         1 - Успешная отработка по заданию
@@ -189,7 +191,7 @@ def worker(proxy_string: str, time_auth_proxy: str, time_auth_accounts: str, res
     # Собираем прокси в список
     MY_LOGGER.debug(f'Собираем прокси в список')
     proxy_lst = []
-    for i_proxy in proxy_string.split('\n'):
+    for i_proxy in proxy_raw:
         if i_proxy != '':
             i_proxy = i_proxy.split(':')
             proxy_dct = {
@@ -214,18 +216,13 @@ def worker(proxy_string: str, time_auth_proxy: str, time_auth_accounts: str, res
             # Добавляем проксю в общий список
             proxy_lst.append(proxy_dct)
 
-    success_accs = 0    # успешно отработавшие аккаунты
+    success_accs = 0  # успешно отработавшие аккаунты
     for i_indx, i_acc in enumerate(thread_accs):
         MY_LOGGER.info(f'Поток № {thread_id}\tБерёт в работу {i_indx + 1} аккаунт '
                        f'из {len(thread_accs)} аккаунтов в потоке.')
 
-        MY_LOGGER.debug(f'Вытягиваем рандомную проксю и форматируем её для работы')
+        MY_LOGGER.debug(f'Вытягиваем рандомную проксю')
         rand_proxy = random.choice(proxy_lst)
-
-        # TODO: с телетоном надо прям проверить, что всё ок
-
-        # Коннектим аккаунт через прокси
-        MY_LOGGER.info(f'Поток № {thread_id}\tАккаунт № {i_indx + 1} коннектится к проксе: {rand_proxy}')
 
         # Достаём инфу об аккаунте из json файла
         MY_LOGGER.debug(f'Поток № {thread_id}\tДостаём инфу об аккаунте из json файла')
@@ -233,142 +230,197 @@ def worker(proxy_string: str, time_auth_proxy: str, time_auth_accounts: str, res
                   mode='r', encoding='utf-8') as json_file:
             json_dct = json.load(fp=json_file)
 
-        # Создаём отдельный event loop asyncio
-        MY_LOGGER.debug(f'Поток № {thread_id}\tСоздаём отдельный event loop asyncio')
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop=loop)
+        # Регаем аккаунт во vtope и получаем atoken
+        MY_LOGGER.debug(f'Поток № {thread_id}\tРегаем аккаунт: {json_dct.get("user_id")}')
+        tlg_id = json_dct.get("user_id")
+        tlg_username = json_dct.get("username", f"user_{tlg_id}")
+        atoken = get_vtope_atoken(btoken=btoken, tlg_id=tlg_id, tlg_username=tlg_username)
+        if not atoken:
+            MY_LOGGER.debug(f'Поток № {thread_id}\tНе удалось получить ATOKEN для аккаунта tlg_id={tlg_id}. '
+                            f'Пропускаем акк...')
+            continue
 
-        # Запускаем итерируемый аккаунт телеги
-        MY_LOGGER.debug(f'Поток № {thread_id}\tЗапускаем итерируемый аккаунт телеги ({i_acc!r})')
-        try:
-            with TelegramClient(
-                    session=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.session'),
-                    api_id=json_dct.get("app_id"),
-                    api_hash=json_dct.get("app_hash"),
-                    proxy=rand_proxy,
-                    timeout=int(time_auth_proxy),
-                    connection_retries=int(reset_accounts),
-                    app_version=json_dct.get("app_version").split()[0],
-                    system_version=json_dct.get("sdk"),
-                    lang_code=json_dct.get("lang_pack"),
-                    system_lang_code=json_dct.get("system_lang_pack"),
-            ) as client:
+        # Проверяем статус аккаунта
+        MY_LOGGER.debug(f'Поток № {thread_id}\tПроверяем статус аккаунта: {json_dct.get("user_id")}')
+        acc_status = get_vtope_acc_status(atoken=atoken)
+        if not acc_status:
+            MY_LOGGER.debug(f'Поток № {thread_id}\tАккаунта: {json_dct.get("user_id")} не прошёл проверку статуса. '
+                            f'Пропускаем его')
+            continue
 
-                MY_LOGGER.debug(f'Поток № {thread_id}\tЗапускаем бесконечный цикл для отработки '
-                                f'аккаунта {i_acc!r} по заданию')
-                while True:
-                    rslt = loop.run_until_complete(do_subscription(client=client, target=target, thread_id=thread_id))
-                    MY_LOGGER.debug(f'Поток № {thread_id}\tРезультат работы акка {i_acc!r} == {rslt}')
+        # Получаем задание
+        MY_LOGGER.debug(f'Поток № {thread_id}\tПолучаем задание для аккаунта: {json_dct.get("user_id")}')
+        get_task_rslt = get_vtope_subs_task(atoken=atoken)
 
-                    # Перемещение файлов для аккаунта в папку done
-                    if rslt[0] == 1:
-                        MY_LOGGER.debug(f'Поток № {thread_id}\tПеремещаем аккаунт {i_acc!r} в папку "done"')
-                        done_dir = os.path.join(BASE_DIR, 'done')
-                        if not os.path.exists(done_dir):
-                            MY_LOGGER.debug(f'Поток № {thread_id}\tПапка done отсутствует и будет создана.')
-                            os.mkdir(done_dir)
-                        shutil.move(
-                            src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.session'),
-                            dst=os.path.join(BASE_DIR, 'done', f'{i_acc}.session')
-                        )
-                        shutil.move(
-                            src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.json'),
-                            dst=os.path.join(BASE_DIR, 'done', f'{i_acc}.json')
-                        )
-                        success_accs += 1
-                        MY_LOGGER.debug(f'Поток № {thread_id}\tОстанавливаем бесконечный цикл для акка {i_acc!r}')
-                        break
+        # Задание получено успешно
+        if get_task_rslt[0]:
+            # Коннектим аккаунт через прокси
+            MY_LOGGER.info(f'Поток № {thread_id}\tАккаунт № {i_indx + 1} коннектится к проксе: {rand_proxy}')
 
-                    if rslt[0] == 2:
-                        MY_LOGGER.debug(f'Поток № {thread_id}\tПолучен код ответа 2 от функции подписки. '
-                                        f'Поток будет остановлен.')
-                        return 2, rslt[1]
+            # Создаём отдельный event loop asyncio
+            MY_LOGGER.debug(f'Поток № {thread_id}\tСоздаём отдельный event loop asyncio')
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop=loop)
 
-                    elif rslt[0] in (3, 4, 5, 8, 11):
-                        MY_LOGGER.debug(f'Поток № {thread_id}\tПроблема с каналом, на который необходимо подписаться. '
-                                        f'Поток будет остановлен')
-                        return 3, rslt[1]
+            # TODO: с телетоном надо прям проверить, что всё ок
+            # Запускаем итерируемый аккаунт телеги
+            MY_LOGGER.debug(f'Поток № {thread_id}\tЗапускаем итерируемый аккаунт телеги ({i_acc!r})')
+            try:
+                with TelegramClient(
+                        session=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.session'),
+                        api_id=json_dct.get("app_id"),
+                        api_hash=json_dct.get("app_hash"),
+                        proxy=rand_proxy,
+                        timeout=int(time_auth_proxy),
+                        connection_retries=int(reset_accounts),
+                        app_version=json_dct.get("app_version").split()[0],
+                        system_version=json_dct.get("sdk"),
+                        lang_code=json_dct.get("lang_pack"),
+                        system_lang_code=json_dct.get("system_lang_pack"),
+                ) as client:
+                    MY_LOGGER.debug(f'Поток № {thread_id}\tЗапускаем бесконечный цикл для отработки '
+                                    f'аккаунта {i_acc!r} по заданию')
+                    while True:
+                        rslt = loop.run_until_complete(
+                            do_subscription(client=client, target=get_task_rslt[1].get("shortcode"), thread_id=thread_id))
+                        MY_LOGGER.debug(f'Поток № {thread_id}\tРезультат работы акка {i_acc!r} == {rslt}')
 
-                    elif rslt[0] in (6, 7, 9, 10, 12, 13, 14):
-                        MY_LOGGER.debug(f'Поток № {thread_id}\tПроблема с аккаунтом {i_acc!r}')
+                        # Перемещение файлов для аккаунта в папку done
+                        if rslt[0] == 1:
+                            MY_LOGGER.debug(f'Поток № {thread_id}\tПеремещаем аккаунт {i_acc!r} в папку "done"')
+                            done_dir = os.path.join(BASE_DIR, 'done')
+                            if not os.path.exists(done_dir):
+                                MY_LOGGER.debug(f'Поток № {thread_id}\tПапка done отсутствует и будет создана.')
+                                os.mkdir(done_dir)
+                            shutil.move(
+                                src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.session'),
+                                dst=os.path.join(BASE_DIR, 'done', f'{i_acc}.session')
+                            )
+                            shutil.move(
+                                src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.json'),
+                                dst=os.path.join(BASE_DIR, 'done', f'{i_acc}.json')
+                            )
+                            success_accs += 1
 
-                        if rslt[0] == 13:
-                            MY_LOGGER.warning(f'Поток № {thread_id}\tАккаунт {i_acc!r} поймал флуд на {rslt[1]} сек.')
-                            if int(flood_account) < int(rslt[1]):
-                                MY_LOGGER.warning(f'Поток № {thread_id}\tПревышен таймаут по флуду для акка {i_acc!r}\n'
-                                                  f'Порог таймаута по флуду: {flood_account} сек., '
-                                                  f'акк получил: {rslt[1]} сек.')
+                            MY_LOGGER.success(f'Поток № {thread_id}\tАкк {i_acc!r} успешно подписался '
+                                              f'{get_task_rslt[1].get("shortcode")!r}.Подтверждаем выполнение во vtope')
+                            send_success_to_vtope(task_id=get_task_rslt[1].get("id"), atoken=atoken)
+                            MY_LOGGER.debug(f'Поток № {thread_id}\tОстанавливаем бесконечный цикл для акка {i_acc!r}')
+                            break
+
+                        # Неожиданное исключение от telethon
+                        elif rslt[0] == 2:
+                            MY_LOGGER.debug(f'Поток № {thread_id}\tПолучен код ответа 2 от функции подписки. ')
+                            MY_LOGGER.warning(f'Поток № {thread_id}\tАкк {i_acc!r} НЕ ПОДПИСАЛСЯ. Ошибка телетона!')
+                            send_task_error_to_vtope(task_id=get_task_rslt[1].get("id"), atoken=atoken)
+                            MY_LOGGER.debug(f'Поток № {thread_id}\tОстанавливаем бесконечный цикл для акка {i_acc!r}')
+                            break
+
+                        elif rslt[0] in (3, 4, 5, 8, 11):
+                            MY_LOGGER.debug(f'Поток № {thread_id}\tПроблема с каналом, на который необходимо '
+                                            f'подписаться. Перемещаем в  папку other_fail_accs')
+                            MY_LOGGER.warning(f'Поток № {thread_id}\tАкк {i_acc!r} НЕ ПОДПИСАЛСЯ. Ошибка из-за канала!')
+                            send_task_error_to_vtope(task_id=get_task_rslt[1].get("id"), atoken=atoken)
+                            MY_LOGGER.debug(f'Поток № {thread_id}\tОстанавливаем бесконечный цикл для акка {i_acc!r}')
+                            break
+
+                        elif rslt[0] in (6, 7, 9, 10, 12, 13, 14):
+                            MY_LOGGER.debug(f'Поток № {thread_id}\tПроблема с аккаунтом {i_acc!r}.')
+
+                            if rslt[0] == 13:
+                                MY_LOGGER.warning(
+                                    f'Поток № {thread_id}\tАккаунт {i_acc!r} поймал флуд на {rslt[1]} сек.')
+
+                                if int(flood_account) < int(rslt[1]):
+                                    MY_LOGGER.warning(
+                                        f'Поток № {thread_id}\tПревышен таймаут по флуду для акка {i_acc!r}\n'
+                                        f'Порог таймаута по флуду: {flood_account} сек., '
+                                        f'акк получил: {rslt[1]} сек.')
+                                    MY_LOGGER.debug(
+                                        f'Поток № {thread_id}\tОтменяем задачу во vtope из-за аккаунта {i_acc!r}')
+                                    send_task_error_to_vtope(task_id=get_task_rslt[1].get("id"), atoken=atoken,
+                                                             err_type='doerror')
+                                    MY_LOGGER.debug(
+                                        f'Поток № {thread_id}\tОстанавливаем бесконечный цикл для акка {i_acc!r}')
+                                    break
+
+                                time.sleep(int(rslt[1]))
+                                MY_LOGGER.info(f'Поток № {thread_id}\tАккаунт {i_acc!r} повторяет попытку подписки.')
+
+                            elif rslt[0] == 14:
+                                MY_LOGGER.warning(f'Поток № {thread_id}\tАккаунт {i_acc!r} поймал бан.')
+                                MY_LOGGER.debug(
+                                    f'Поток № {thread_id}\tОтменяем задачу во vtope из-за аккаунта {i_acc!r}')
+                                send_task_error_to_vtope(task_id=get_task_rslt[1].get("id"), atoken=atoken,
+                                                         err_type='doerror')
                                 MY_LOGGER.debug(
                                     f'Поток № {thread_id}\tОстанавливаем бесконечный цикл для акка {i_acc!r}')
                                 break
-                            time.sleep(int(rslt[1]))
-                            MY_LOGGER.info(f'Поток № {thread_id}\tАккаунт {i_acc!r} повторяет попытку подписки.')
 
-                        elif rslt[0] == 14:
-                            MY_LOGGER.warning(f'Поток № {thread_id}\tАккаунт {i_acc!r} поймал бан.')
-                            MY_LOGGER.debug(f'Поток № {thread_id}\tОстанавливаем бесконечный цикл для акка {i_acc!r}')
-                            break
+                            else:
+                                MY_LOGGER.warning(f'Поток № {thread_id}\tВозникла проблема с аккаунтом: {i_acc!r}.'
+                                                  f'\nТекст ошибки: {rslt[1]}')
+                                MY_LOGGER.debug(
+                                    f'Поток № {thread_id}\tОстанавливаем бесконечный цикл для акка {i_acc!r}')
+                                break
 
-                        else:
-                            MY_LOGGER.warning(f'Поток № {thread_id}\tВозникла проблема с аккаунтом: {i_acc!r}. '
-                                              f'Он будет перемещён в папку other_fail_accs.\nТекст ошибки: {rslt[1]}')
-                            MY_LOGGER.debug(f'Поток № {thread_id}\tОстанавливаем бесконечный цикл для акка {i_acc!r}')
-                            break
+            except ConnectionError as err:
+                MY_LOGGER.warning(
+                    f'Поток № {thread_id}\tАккаунту {i_acc} не удалось подключится к прокси {rand_proxy}. '
+                    f'Текст ошибки: {err}')
 
-        except ConnectionError as err:
-            MY_LOGGER.warning(f'Поток № {thread_id}\tАккаунту {i_acc} не удалось подключится к прокси {rand_proxy}. '
-                              f'Текст ошибки: {err}')
+                # Перемещение файлов аккаунта, которому не удалось подключиться к проксе в папку no_connect
+                no_connect_dir = os.path.join(BASE_DIR, 'no_connect')
+                if not os.path.exists(no_connect_dir):
+                    MY_LOGGER.debug(f'Поток № {thread_id}\tПапка no_connect отсутствует, создаём её.')
+                    os.mkdir(no_connect_dir)
+                MY_LOGGER.debug(f'Поток № {thread_id}\tПеремещаем файлы аккаунта {i_acc!r} в папку no_connect')
+                shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.session'),
+                            dst=os.path.join(no_connect_dir, f'{i_acc}.session'))
+                shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.json'),
+                            dst=os.path.join(no_connect_dir, f'{i_acc}.json'))
 
-            # Перемещение файлов аккаунта, которому не удалось подключиться к проксе в папку no_connect
-            no_connect_dir = os.path.join(BASE_DIR, 'no_connect')
-            if not os.path.exists(no_connect_dir):
-                MY_LOGGER.debug(f'Поток № {thread_id}\tПапка no_connect отсутствует, создаём её.')
-                os.mkdir(no_connect_dir)
-            MY_LOGGER.debug(f'Поток № {thread_id}\tПеремещаем файлы аккаунта {i_acc!r} в папку no_connect')
-            shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.session'),
-                        dst=os.path.join(no_connect_dir, f'{i_acc}.session'))
-            shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.json'),
-                        dst=os.path.join(no_connect_dir, f'{i_acc}.json'))
+            # Блоки обработки проблем с аккаунтом
+            if rslt[0] == 14:
+                MY_LOGGER.debug(f'Поток № {thread_id}\tПопали в блок IF для выполнения действий в случае бана аккаунта')
+                banned_dir = os.path.join(BASE_DIR, 'banned')
+                if not os.path.exists(banned_dir):
+                    MY_LOGGER.debug(f'Поток № {thread_id}\tПапка banned отсутствует и будет создана.')
+                    os.mkdir(banned_dir)
+                MY_LOGGER.debug(f'Поток № {thread_id}\tПеремещаем файлы аккаунта {i_acc!r} в папку banned')
+                shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.session'),
+                            dst=os.path.join(banned_dir, f'{i_acc}.session'))
+                shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.json'),
+                            dst=os.path.join(banned_dir, f'{i_acc}.json'))
 
-        # Блоки обработки проблем с аккаунтом
-        if rslt[0] == 14:
-            MY_LOGGER.debug(f'Поток № {thread_id}\tПопали в блок IF для выполнения действий в случае бана аккаунта')
-            banned_dir = os.path.join(BASE_DIR, 'banned')
-            if not os.path.exists(banned_dir):
-                MY_LOGGER.debug(f'Поток № {thread_id}\tПапка banned отсутствует и будет создана.')
-                os.mkdir(banned_dir)
-            MY_LOGGER.debug(f'Поток № {thread_id}\tПеремещаем файлы аккаунта {i_acc!r} в папку banned')
-            shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.session'),
-                        dst=os.path.join(banned_dir, f'{i_acc}.session'))
-            shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.json'),
-                        dst=os.path.join(banned_dir, f'{i_acc}.json'))
+            elif rslt[0] == 13 and int(flood_account) < int(rslt[1]):
+                MY_LOGGER.debug(
+                    f'Поток № {thread_id}\tПопали в блок IF для выполнения действий в случае флуда аккаунта')
+                banned_dir = os.path.join(BASE_DIR, 'flood_to_mutch')
+                if not os.path.exists(banned_dir):
+                    MY_LOGGER.debug(f'Поток № {thread_id}\tПапка flood_to_mutch отсутствует и будет создана.')
+                    os.mkdir(banned_dir)
+                MY_LOGGER.debug(f'Поток № {thread_id}\tПеремещаем файлы аккаунта {i_acc!r} в папку flood_to_mutch')
+                shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.session'),
+                            dst=os.path.join(banned_dir, f'{i_acc}.session'))
+                shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.json'),
+                            dst=os.path.join(banned_dir, f'{i_acc}.json'))
 
-        elif rslt[0] == 13 and int(flood_account) < int(rslt[1]):
-            MY_LOGGER.debug(f'Поток № {thread_id}\tПопали в блок IF для выполнения действий в случае флуда аккаунта')
-            banned_dir = os.path.join(BASE_DIR, 'flood_to_mutch')
-            if not os.path.exists(banned_dir):
-                MY_LOGGER.debug(f'Поток № {thread_id}\tПапка flood_to_mutch отсутствует и будет создана.')
-                os.mkdir(banned_dir)
-            MY_LOGGER.debug(f'Поток № {thread_id}\tПеремещаем файлы аккаунта {i_acc!r} в папку flood_to_mutch')
-            shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.session'),
-                        dst=os.path.join(banned_dir, f'{i_acc}.session'))
-            shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.json'),
-                        dst=os.path.join(banned_dir, f'{i_acc}.json'))
-
-        elif rslt[0] in (6, 7, 9, 10, 12):
-            MY_LOGGER.debug(f'Поток № {thread_id}\tПопали в блок IF для выполнения действий в случае проблем с акком')
-            other_fail_dir = os.path.join(BASE_DIR, 'other_fail_accs')
-            if not os.path.exists(other_fail_dir):
-                MY_LOGGER.debug(f'Поток № {thread_id}\tПапка other_fail_accs отсутствует и будет создана.')
-                os.mkdir(other_fail_dir)
-            MY_LOGGER.debug(f'Поток № {thread_id}\tПеремещаем файлы аккаунта {i_acc!r} в папку other_fail_accs')
-            shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.session'),
-                        dst=os.path.join(other_fail_dir, f'{i_acc}.session'))
-            shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.json'),
-                        dst=os.path.join(other_fail_dir, f'{i_acc}.json'))
+            elif rslt[0] in (6, 7, 9, 10, 12):
+                MY_LOGGER.debug(
+                    f'Поток № {thread_id}\tПопали в блок IF для выполнения действий в случае проблем с акком')
+                other_fail_dir = os.path.join(BASE_DIR, 'other_fail_accs')
+                if not os.path.exists(other_fail_dir):
+                    MY_LOGGER.debug(f'Поток № {thread_id}\tПапка other_fail_accs отсутствует и будет создана.')
+                    os.mkdir(other_fail_dir)
+                MY_LOGGER.debug(f'Поток № {thread_id}\tПеремещаем файлы аккаунта {i_acc!r} в папку other_fail_accs')
+                shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.session'),
+                            dst=os.path.join(other_fail_dir, f'{i_acc}.session'))
+                shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.json'),
+                            dst=os.path.join(other_fail_dir, f'{i_acc}.json'))
 
         # Таймаут между действиями аккаунтов
-        if i_indx + 1 < len(thread_accs):   # Проверяем, что аккаунт не последний в списке
+        if i_indx + 1 < len(thread_accs):  # Проверяем, что аккаунт не последний в списке
             MY_LOGGER.debug(f'Поток № {thread_id}\tРассчитываем таймаут между действиями аккаунтов. '
                             f'Диапазон паузы: {time_auth_accounts}')
             acc_timeout = time_auth_accounts.replace(' ', '').split('-')
@@ -382,12 +434,12 @@ def worker(proxy_string: str, time_auth_proxy: str, time_auth_accounts: str, res
         return main_result
 
 
-def main_work_on_assignment(limits_dct: dict, target: str) -> Tuple:
+def main_work_on_assignment_vtope(limits_dct: dict, proxy_lst: List[str]) -> List:
     """
     Основная функция работы по заданиям.
-    :param limits_dct - ограничения для работы по заданию.
-    :param target - ссылка, username для канала, на который подписываемся.
-    :return: Tuple - счётчик успешных аккаунтов, потоки с ошибкой, валидна ли ссылка
+    :param proxy_lst: - список с проксями
+    :param limits_dct: - ограничения для работы по заданию.
+    :return: List - счётчик успешных аккаунтов,
     """
     # Записываем необходимые данные в переменные
     MY_LOGGER.debug(f'Записываем необходимые данные для выполнения задания в переменные')
@@ -396,11 +448,6 @@ def main_work_on_assignment(limits_dct: dict, target: str) -> Tuple:
     reset_accounts = limits_dct.get('reset_accounts')  # Кол-во попыток подключения аккаунта через проксю
     time_auth_accounts = limits_dct.get('time_auth_accounts')  # Таймаут между действиями аккаунта
     flood_account = limits_dct.get('flood_account')  # Макс. таймаут флуда
-
-    # Открываем файл с проксями и складываем их в список
-    MY_LOGGER.debug(f'Открываем файл с проксями и складываем их в список')
-    with open(file=os.path.join(BASE_DIR, 'settings', 'proxy.txt'), mode='r', encoding='utf-8') as proxy_file:
-        proxy_string = proxy_file.read()
 
     # Распределяем аккаунты по потокам
     MY_LOGGER.debug(f'Распределяем аккаунты по потокам')
@@ -428,6 +475,13 @@ def main_work_on_assignment(limits_dct: dict, target: str) -> Tuple:
         threads_acc_dct[i_indx + 1] = general_acc_lst[:accs_for_one_thread]
         general_acc_lst = general_acc_lst[accs_for_one_thread:]  # срезаем те акки, которые уже забрали
 
+    # Достаём btoken из файла (он на этом этапе там 100% есть)
+    MY_LOGGER.debug(f'Достаём btoken из файла')
+    api_values_file_path = os.path.join(BASE_DIR, 'settings', 'api_keys.json')
+    with open(file=api_values_file_path, mode='r', encoding='utf-8') as file:
+        api_values: dict = json.load(fp=file)
+    btoken = api_values.get('vtope_btoken')
+
     # Запускаем потоки
     MY_LOGGER.debug(f'Запускаем потоки')
     threads = []
@@ -435,15 +489,13 @@ def main_work_on_assignment(limits_dct: dict, target: str) -> Tuple:
         MY_LOGGER.info(f'Запускаем поток № {i_thread_id}')
         i_thread_accs = threads_acc_dct.get(i_thread_id)
         thread = threading.Thread(target=lambda: setattr(threading.current_thread(), 'result', worker(
-            proxy_string, time_auth_proxy, time_auth_accounts, reset_accounts, i_thread_id, i_thread_accs, target,
-            flood_account
+            proxy_lst, time_auth_proxy, time_auth_accounts, reset_accounts, i_thread_id, i_thread_accs,
+            flood_account, btoken
         )))
         thread.start()
         threads.append(thread)
 
     accs_rslt = [0, 0]  # [Кол-во успешно подписанных аккаунтов, общее кол-во аккаунтов]
-    fail_threads: List[Tuple[int, int, str]] = []   # (номер потока, код результата, описание)
-    invalid_link = False    # Флаг, о том, что по переданной в задании ссылке нельзя подписаться
     for i_indx, i_thread in enumerate(threads):
         i_thread.join()
         thread_result = i_thread.result
@@ -453,17 +505,5 @@ def main_work_on_assignment(limits_dct: dict, target: str) -> Tuple:
             accs_rslt[0] += int(thread_result[1].split('|')[0])
             accs_rslt[1] += int(thread_result[1].split('|')[1])
 
-        elif thread_result[0] == 2:
-            MY_LOGGER.debug(f'ПОТОК № {i_indx + 1}\tПрекращён из-за неожиданного исключения. '
-                            f'Текст ошибки: {thread_result[1]}')
-            fail_threads.append((i_indx + 1, 2, f'Получено неожиданное исключение, текст: {thread_result[1]}'))
-        else:
-            MY_LOGGER.debug(f'ПОТОК № {i_indx + 1}\tПроблемма со ссылкой на канал(чат), текст: {thread_result[1]}')
-            fail_threads.append((i_indx + 1, 3, f'Проблема со ссылкой на канал(чат), текст: {thread_result[1]}'))
-            invalid_link = True
-
     MY_LOGGER.debug(f'Возвращаем результат работы потоков в функцию main')
-    return accs_rslt, fail_threads, invalid_link
-
-
-
+    return accs_rslt
