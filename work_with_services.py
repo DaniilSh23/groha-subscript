@@ -24,8 +24,8 @@ def choose_service_new():
             api_values: dict = json.load(fp=file)
 
         # Проверяем наличие utoken
-        if api_values.get('utoken'):
-            btoken = get_vtope_btoken(utoken=api_values.get('utoken'))  # Получаем btoken в сервисе vtope
+        if api_values.get('vtope_utoken'):
+            btoken = get_vtope_btoken(utoken=api_values.get('vtope_utoken'))  # Получаем btoken в сервисе vtope
 
             if btoken:
                 # Записываем Telegram ID, Telegram username и atoken в api_keys.json
@@ -38,7 +38,6 @@ def choose_service_new():
             MY_LOGGER.warning('Токены для vtope не найдены! Пожалуйста внесите хотя бы utoken в файл api.keys.json\n'
                               'Его можно скопировать из ЛК сервиса vtope.')
             raise MyException(message='В файле api_keys.json отсутствует utoken для сервиса vtope')
-            return  # TODO: потом убрать, так как тут ф-я закончится
 
     # TODO: дописать условие его тело для выбора socpanel
 

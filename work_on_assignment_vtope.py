@@ -379,6 +379,8 @@ def worker(proxy_raw: List[str], time_auth_proxy: str, time_auth_accounts: str, 
                             dst=os.path.join(no_connect_dir, f'{i_acc}.session'))
                 shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.json'),
                             dst=os.path.join(no_connect_dir, f'{i_acc}.json'))
+                MY_LOGGER.info(f'Поток № {thread_id}\tПереходим к следующему аккаунту')
+                continue
 
             # Блоки обработки проблем с аккаунтом
             if rslt[0] == 14:
@@ -429,9 +431,9 @@ def worker(proxy_raw: List[str], time_auth_proxy: str, time_auth_accounts: str, 
                            f'{sleep_between_actions} сук.')
             time.sleep(sleep_between_actions)
 
-        main_result = 1, f'{success_accs}|{len(thread_accs)}'
-        MY_LOGGER.info(f'Поток № {thread_id}\tОтработал. Успешно подписались {success_accs} из {len(thread_accs)}')
-        return main_result
+    main_result = 1, f'{success_accs}|{len(thread_accs)}'
+    MY_LOGGER.info(f'Поток № {thread_id}\tОтработал. Успешно подписались {success_accs} из {len(thread_accs)}')
+    return main_result
 
 
 def main_work_on_assignment_vtope(limits_dct: dict, proxy_lst: List[str]) -> List:

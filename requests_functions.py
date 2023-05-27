@@ -1,3 +1,4 @@
+import random
 from typing import Tuple
 
 import requests
@@ -10,12 +11,11 @@ def get_vtope_acc_status(atoken: str) -> bool | None:
     """
     Запрос на получение статуса аккаунта в сервисе vtope
     """
-    # TODO: пока это заглушка, потом надо доделать. Тут же обработка неудачного запроса
-    response = {"status": "ok", "quality": 1, "earned": 0, "earned_today": 0}
 
     req_url = f'https://vto.pe/botapi/m/account?atoken={atoken}'
     response = requests.get(url=req_url)
     resp_data = response.json()
+    MY_LOGGER.debug(f'Ответ vtope на проверку статуса акка по atoken == {atoken!r}.\n{response.text}')
     if resp_data.get('status') == 'ok' and resp_data.get('quality') > 0:
         return True
     else:
@@ -27,14 +27,13 @@ def get_vtope_atoken(btoken, tlg_id, tlg_username) -> str | None:
     """
     Запрос для получения atoken в сервисе vtope
     """
-    # TODO: заглушка, потом дописать. Тут же обработка неудачного запроса
-    response = {"atoken": "zMCebNgjMcmhks77cAfAqNG0LETF7GhY"}
 
     req_url = f'https://vto.pe/botapi/m/account?btoken={btoken}&id={tlg_id}&nick={tlg_username}'
     response = requests.get(url=req_url)
     resp_data = response.json()
     if resp_data.get('atoken'):
         MY_LOGGER.success(f'Успешный запрос для получения atoken vtope')
+        MY_LOGGER.debug(f'Получен atoken для акка {tlg_id!r}|{tlg_username}. Его значение {resp_data.get("atoken")!r}')
         return resp_data.get('atoken')
     else:
         MY_LOGGER.warning(f'Не удалось выполнить запрос к vtope для получения atoken. Ответ vtope: {response.text}')
@@ -45,8 +44,6 @@ def get_vtope_btoken(utoken: str) -> str:
     Запрос для получения btoken в сервисе vtope.
     Возвращает btoken
     """
-    # TODO: заглушка, потом дописать. Тут же обработка неудачного запроса
-    response = {"btoken": "hVEKtDL6eE95g6IeNyl9cAty1iDYln4r", "points": 100, "and_other_keys": "with_some_values"}
 
     auth_url = f'https://vto.pe/botapi/user?utoken={utoken}&device=moikompahule&program=SubScript&bot=TestBot'
     response = requests.get(url=auth_url)
@@ -56,7 +53,8 @@ def get_vtope_btoken(utoken: str) -> str:
         return resp_data.get('btoken')
     else:
         MY_LOGGER.warning(f'Не удалось выполнить запрос к vtope для получения btoken.')
-        raise MyException(message=f'Не удалось выполнить запрос к vtope для получения btoken. Ответ vtope: {response}')
+        raise MyException(message=f'Не удалось выполнить запрос к vtope для получения btoken. '
+                                  f'Ответ vtope: {response.text}')
 
 
 def get_vtope_subs_task(atoken: str) -> Tuple:
@@ -66,14 +64,25 @@ def get_vtope_subs_task(atoken: str) -> Tuple:
     """
     MY_LOGGER.debug(f'Получаем задания на подписку во vtope')
 
+    # TODO: заглушка на получение заданий, потом удалить
+    rand_target = random.choice(
+        (
+            'https://t.me/+1ZKtuEk_ivk2NmZi',
+            'https://t.me/+2vriZ41DymY2ZjYy',
+            # 'https://t.me/test_channel_for_my_bot32',
+        )
+    )
+    return True, {'shortcode': rand_target, 'id': 0}
+    # TODO: ==============================================
+
     url = "https://tasks.vto.pe/botapi/tasks/m/follow"
     querystring = {"atoken": atoken}
     response = requests.get(url, params=querystring)
 
     if response.status_code not in [200, 400]:
-        MY_LOGGER.warning(f'Неудачный запрос к сервису vtope. Ответ: {response.json()}')
+        MY_LOGGER.warning(f'Неудачный запрос к сервису vtope. Ответ: {response.text}')
 
-    MY_LOGGER.debug(f'Обработка ответа на запрос задания во vtope')
+    MY_LOGGER.debug(f'Обработка ответа на запрос задания во vtope. Ответ vtope: {response.text}')
     response_data = response.json()
     if response_data.get('id'):
         MY_LOGGER.success(f'ЗАДАНИЕ ПОЛУЧЕНО УСПЕШНО. ОТВЕТ: {response_data}')
@@ -106,7 +115,7 @@ def get_vtope_subs_task(atoken: str) -> Tuple:
         return False, 'аккаунт низкого качества'
 
     else:
-        MY_LOGGER.warning(f'Получен ответ от vtope, неописанный в документации. Ответ: {response_data}')
+        MY_LOGGER.warning(f'Получен ответ от vtope, неописанный в документации. Ответ: {response.text}')
         return False, 'получен ответ от vtope, неописанный в документации этого сервиса'
 
 
@@ -123,15 +132,17 @@ def send_success_to_vtope(task_id, atoken):
     url = "https://tasks.vto.pe/botapi/tasks/m/done/ok"
     querystring = {"atoken": atoken, "id": task_id}
     response = requests.get(url, params=querystring)
+    MY_LOGGER.debug(f'Подтверждение выполнения задания vtope, atoken={atoken!r}|task_id={task_id!r}. '
+                    f'Ответ на запрос: {response.text}')
 
     if response.status_code not in [200, 400]:
         MY_LOGGER.warning(f'Неудачный запрос к сервису vtope. Ответ: {response.json()}')
 
     response_data = response.json()
     if response_data.get('error') == 'ok':
-        MY_LOGGER.info(f'Задание успешно отправлено на проверку.')
+        MY_LOGGER.info(f'Задание vtope ID={task_id!r}|atoken={atoken!r} успешно отправлено на проверку.')
     elif response_data.get('error') == 'invalid':
-        MY_LOGGER.warning(f'не найден аккаунт/задание')
+        MY_LOGGER.warning(f'Задание vtope ID={task_id!r}|atoken={atoken!r}. Ответ vtope: не найден аккаунт/задание')
 
 
 def send_task_error_to_vtope(task_id, atoken, err_type='taskerror'):
@@ -145,6 +156,8 @@ def send_task_error_to_vtope(task_id, atoken, err_type='taskerror'):
     url = f"https://tasks.vto.pe/botapi/tasks/m/done/{err_type}"
     querystring = {"atoken": atoken, "id": task_id}
     response = requests.get(url, params=querystring)
+    MY_LOGGER.debug(f'Запрос на отмену задания vtope. Причина фэйла: {err_type!r}|task_id={task_id!r}|atoken={atoken!r}'
+                    f'Ответ на запрос: {response.text}')
 
     if response.status_code not in [200, 400]:
         MY_LOGGER.warning(f'Неудачный запрос к сервису vtope. Ответ: {response.json()}')
