@@ -5,7 +5,7 @@ from work_with_services import choose_service_new
 
 
 @MY_LOGGER.catch
-def new_main():
+def main():
     """
     Новая основная функция, с учётом принципа работы сервиса vtope
     """
@@ -33,5 +33,4 @@ def new_main():
 
 
 if __name__ == '__main__':
-    # main()
-    new_main()
+    main()

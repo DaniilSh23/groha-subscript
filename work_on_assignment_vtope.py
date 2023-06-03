@@ -8,14 +8,16 @@ import threading
 import time
 from typing import List, Tuple
 import socks
+from telethon import TelegramClient
 
 from telethon.errors import ChannelsTooMuchError, ChannelInvalidError, ChannelPrivateError, InviteHashEmptyError, \
     InviteHashExpiredError, InviteHashInvalidError, SessionPasswordNeededError, UsersTooMuchError, \
     UserAlreadyParticipantError, rpcerrorlist
-from telethon import TelegramClient
 from telethon.network import connection
 from telethon.tl import functions
 
+from my_exceptions import MyExcSessionExpired
+from my_tlg_client import MyTelegramClient
 from requests_functions import get_vtope_atoken, get_vtope_acc_status, get_vtope_subs_task, send_success_to_vtope, \
     send_task_error_to_vtope
 from settings.settings import BASE_DIR, MY_LOGGER
@@ -231,8 +233,8 @@ def worker(proxy_raw: List[str], time_auth_proxy: str, time_auth_accounts: str, 
             json_dct = json.load(fp=json_file)
 
         # Регаем аккаунт во vtope и получаем atoken
-        MY_LOGGER.debug(f'Поток № {thread_id}\tРегаем аккаунт: {json_dct.get("user_id")}')
         tlg_id = json_dct.get("user_id")
+        MY_LOGGER.debug(f'Поток № {thread_id}\tРегаем аккаунт: {tlg_id}')
         tlg_username = json_dct.get("username", f"user_{tlg_id}")
         atoken = get_vtope_atoken(btoken=btoken, tlg_id=tlg_id, tlg_username=tlg_username)
         if not atoken:
@@ -241,7 +243,7 @@ def worker(proxy_raw: List[str], time_auth_proxy: str, time_auth_accounts: str, 
             continue
 
         # Проверяем статус аккаунта
-        MY_LOGGER.debug(f'Поток № {thread_id}\tПроверяем статус аккаунта: {json_dct.get("user_id")}')
+        MY_LOGGER.debug(f'Поток № {thread_id}\tПроверяем статус аккаунта: {tlg_id}')
         acc_status = get_vtope_acc_status(atoken=atoken)
         if not acc_status:
             MY_LOGGER.debug(f'Поток № {thread_id}\tАккаунта: {json_dct.get("user_id")} не прошёл проверку статуса. '
@@ -249,7 +251,7 @@ def worker(proxy_raw: List[str], time_auth_proxy: str, time_auth_accounts: str, 
             continue
 
         # Получаем задание
-        MY_LOGGER.debug(f'Поток № {thread_id}\tПолучаем задание для аккаунта: {json_dct.get("user_id")}')
+        MY_LOGGER.debug(f'Поток № {thread_id}\tПолучаем задание для аккаунта: {tlg_id}')
         get_task_rslt = get_vtope_subs_task(atoken=atoken)
 
         # Задание получено успешно
@@ -313,6 +315,20 @@ def worker(proxy_raw: List[str], time_auth_proxy: str, time_auth_accounts: str, 
                             MY_LOGGER.debug(f'Поток № {thread_id}\tПолучен код ответа 2 от функции подписки. ')
                             MY_LOGGER.warning(f'Поток № {thread_id}\tАкк {i_acc!r} НЕ ПОДПИСАЛСЯ. Ошибка телетона!')
                             send_task_error_to_vtope(task_id=get_task_rslt[1].get("id"), atoken=atoken)
+
+                            MY_LOGGER.debug(f'Перемещаем акк в папку other_fail_accs')
+                            other_fail_dir = os.path.join(BASE_DIR, 'other_fail_accs')
+                            if not os.path.exists(other_fail_dir):
+                                MY_LOGGER.debug(
+                                    f'Поток № {thread_id}\tПапка other_fail_accs отсутствует и будет создана.')
+                                os.mkdir(other_fail_dir)
+                            MY_LOGGER.debug(
+                                f'Поток № {thread_id}\tПеремещаем файлы аккаунта {i_acc!r} в папку other_fail_accs')
+                            shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.session'),
+                                        dst=os.path.join(other_fail_dir, f'{i_acc}.session'))
+                            shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.json'),
+                                        dst=os.path.join(other_fail_dir, f'{i_acc}.json'))
+
                             MY_LOGGER.debug(f'Поток № {thread_id}\tОстанавливаем бесконечный цикл для акка {i_acc!r}')
                             break
 
@@ -380,6 +396,26 @@ def worker(proxy_raw: List[str], time_auth_proxy: str, time_auth_accounts: str, 
                 shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.json'),
                             dst=os.path.join(no_connect_dir, f'{i_acc}.json'))
                 MY_LOGGER.info(f'Поток № {thread_id}\tПереходим к следующему аккаунту')
+
+                # Отправляем отмену задания во vtope из-за нашего аккаунта
+                send_task_error_to_vtope(task_id=get_task_rslt[1].get("id"), atoken=atoken, err_type='doerror')
+                continue
+
+            except MyExcSessionExpired as err:
+                MY_LOGGER.warning(f'Поток № {thread_id}\tАккаунт ({i_acc!r}) требует повторной авторизации и будет '
+                                  f'перемещён в папку other_fail_accs.\nОригинальный текст ошибки: {err}')
+                other_fail_dir = os.path.join(BASE_DIR, 'other_fail_accs')
+                if not os.path.exists(other_fail_dir):
+                    MY_LOGGER.debug(f'Поток № {thread_id}\tПапка other_fail_accs отсутствует и будет создана.')
+                    os.mkdir(other_fail_dir)
+                MY_LOGGER.debug(f'Поток № {thread_id}\tПеремещаем файлы аккаунта {i_acc!r} в папку other_fail_accs')
+                shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.session'),
+                            dst=os.path.join(other_fail_dir, f'{i_acc}.session'))
+                shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.json'),
+                            dst=os.path.join(other_fail_dir, f'{i_acc}.json'))
+
+                # Отправляем отмену задания во vtope из-за нашего аккаунта
+                send_task_error_to_vtope(task_id=get_task_rslt[1].get("id"), atoken=atoken, err_type='doerror')
                 continue
 
             # Блоки обработки проблем с аккаунтом
@@ -394,6 +430,8 @@ def worker(proxy_raw: List[str], time_auth_proxy: str, time_auth_accounts: str, 
                             dst=os.path.join(banned_dir, f'{i_acc}.session'))
                 shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.json'),
                             dst=os.path.join(banned_dir, f'{i_acc}.json'))
+                # Отправляем отмену задания во vtope из-за нашего аккаунта
+                send_task_error_to_vtope(task_id=get_task_rslt[1].get("id"), atoken=atoken, err_type='doerror')
 
             elif rslt[0] == 13 and int(flood_account) < int(rslt[1]):
                 MY_LOGGER.debug(
@@ -407,6 +445,8 @@ def worker(proxy_raw: List[str], time_auth_proxy: str, time_auth_accounts: str, 
                             dst=os.path.join(banned_dir, f'{i_acc}.session'))
                 shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.json'),
                             dst=os.path.join(banned_dir, f'{i_acc}.json'))
+                # Отправляем отмену задания во vtope из-за нашего аккаунта
+                send_task_error_to_vtope(task_id=get_task_rslt[1].get("id"), atoken=atoken, err_type='doerror')
 
             elif rslt[0] in (6, 7, 9, 10, 12):
                 MY_LOGGER.debug(
@@ -420,6 +460,8 @@ def worker(proxy_raw: List[str], time_auth_proxy: str, time_auth_accounts: str, 
                             dst=os.path.join(other_fail_dir, f'{i_acc}.session'))
                 shutil.move(src=os.path.join(BASE_DIR, 'accounts', f'{i_acc}.json'),
                             dst=os.path.join(other_fail_dir, f'{i_acc}.json'))
+                # Отправляем отмену задания во vtope из-за нашего аккаунта
+                send_task_error_to_vtope(task_id=get_task_rslt[1].get("id"), atoken=atoken, err_type='doerror')
 
         # Таймаут между действиями аккаунтов
         if i_indx + 1 < len(thread_accs):  # Проверяем, что аккаунт не последний в списке

@@ -5,7 +5,7 @@ import sys
 import pytz
 from loguru import logger
 
-DEBUG = False
+DEBUG = True
 
 # Настраиваем запись логов
 MY_LOGGER = logger
