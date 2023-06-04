@@ -13,7 +13,7 @@ MY_LOGGER.remove()
 MY_LOGGER.add(  # системные логи в файл
     sink=os.path.join(
         'logs',
-        f'sys_logs_{datetime.datetime.now(tz=pytz.timezone("Europe/Moscow")).strftime("%d.%m.%Y_%H:%M:%S")}.log'
+        f'sys_logs_{datetime.datetime.now(tz=pytz.timezone("Europe/Moscow")).strftime("%d-%m-%Y_%H-%M-%S")}.log'
     ),
     filter=lambda rec: rec['level'].name in ('DEBUG', 'CRITICAL', 'ERROR'),
     rotation='10 MB',
@@ -25,7 +25,7 @@ MY_LOGGER.add(  # системные логи в файл
 MY_LOGGER.add(
     sink=os.path.join(
         'logs',
-        f'logs_{datetime.datetime.now(tz=pytz.timezone("Europe/Moscow")).strftime("%d.%m.%Y_%H:%M:%S")}.log'
+        f'logs_{datetime.datetime.now(tz=pytz.timezone("Europe/Moscow")).strftime("%d-%m-%Y_%H-%M-%S")}.log'
     ),
     filter=lambda rec: rec['level'].name in ('INFO', 'WARNING', 'SUCCESS'),
     rotation='10 MB',
