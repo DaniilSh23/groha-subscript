@@ -16,3 +16,6 @@ echo Pip has been installed successfully.
 cd %current_path%
 python -m pip install -r requirements.txt
 echo Dependencies has been installed successfully.
+
+echo 'Установка завершена.\nНа Ваш комп были установлены: python версии 3.10, менеджер пакетов pip (нужен для работы) и установлены пакеты, необходимые для работы скрипта.\nТак что теперь, как в народе говорится: взял мяч и пиздячь.'
+pause
