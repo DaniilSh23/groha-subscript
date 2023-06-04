@@ -64,16 +64,16 @@ def get_vtope_subs_task(atoken: str) -> Tuple:
     """
     MY_LOGGER.debug(f'Получаем задания на подписку во vtope')
 
-    # TODO: заглушка на получение заданий, потом удалить
-    rand_target = random.choice(
-        (
-            'https://t.me/+1ZKtuEk_ivk2NmZi',
-            'https://t.me/+2vriZ41DymY2ZjYy',
-            # 'https://t.me/test_channel_for_my_bot32',
-        )
-    )
-    return True, {'shortcode': rand_target, 'id': 0}
-    # TODO: ==============================================
+    # # TODO: заглушка на получение заданий, потом удалить
+    # rand_target = random.choice(
+    #     (
+    #         'https://t.me/+1ZKtuEk_ivk2NmZi',
+    #         'https://t.me/+2vriZ41DymY2ZjYy',
+    #         # 'https://t.me/test_channel_for_my_bot32',
+    #     )
+    # )
+    # return True, {'shortcode': rand_target, 'id': 0}
+    # # TODO: ==============================================
 
     url = "https://tasks.vto.pe/botapi/tasks/m/follow"
     querystring = {"atoken": atoken}

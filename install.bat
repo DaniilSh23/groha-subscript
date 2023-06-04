@@ -1,3 +1,5 @@
+set "current_path=%~dp0"
+
 cd C:\
 mkdir Python
 cd Python
@@ -11,5 +13,6 @@ powershell -Command "(Invoke-WebRequest https://bootstrap.pypa.io/get-pip.py -Ou
 python get-pip.py
 echo Pip has been installed successfully.
 
+cd %current_path%
 python -m pip install -r requirements.txt
 echo Dependencies has been installed successfully.

@@ -264,7 +264,6 @@ def worker(proxy_raw: List[str], time_auth_proxy: str, time_auth_accounts: str, 
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop=loop)
 
-            # TODO: с телетоном надо прям проверить, что всё ок
             # Запускаем итерируемый аккаунт телеги
             MY_LOGGER.debug(f'Поток № {thread_id}\tЗапускаем итерируемый аккаунт телеги ({i_acc!r})')
             try:
